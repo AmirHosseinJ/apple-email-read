@@ -4,11 +4,12 @@ from unittest.mock import patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.email_checks.tasks import run_outlook_check_task
 from config.celery import app as celery_app
 
 
@@ -90,6 +91,33 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.assertEqual(status_response.data['status'], 'success')
         self.assertEqual(status_response.data['result']['otp'], '123456')
         self.assertEqual(status_response.data['result']['messages_checked'], 1)
+
+
+class OutlookEmailCheckTaskRetryTests(TestCase):
+    @override_settings(
+        CELERY_EMAIL_CHECK_RETRY_COUNT=4,
+        CELERY_EMAIL_CHECK_RETRY_DELAY_SECONDS=12,
+    )
+    @patch('apps.email_checks.tasks.run_outlook_check')
+    def test_retries_failed_outlook_check_with_configured_delay(self, mocked_run_outlook_check):
+        failure = RuntimeError('browser failed')
+        retry_request = RuntimeError('retry requested')
+        mocked_run_outlook_check.side_effect = failure
+
+        with patch.object(run_outlook_check_task, 'retry', side_effect=retry_request) as mocked_retry:
+            with self.assertRaises(RuntimeError) as raised:
+                run_outlook_check_task.run(
+                    email='person@example.com',
+                    password='secret-password',
+                    max_messages=1,
+                )
+
+        self.assertIs(raised.exception, retry_request)
+        mocked_retry.assert_called_once_with(
+            exc=failure,
+            countdown=12,
+            max_retries=4,
+        )
 
 
 class OutlookEmailCheckRunViewTests(TestCase):
