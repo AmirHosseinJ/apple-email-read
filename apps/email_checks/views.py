@@ -10,9 +10,6 @@ from apps.email_checks.tasks import run_outlook_check_task
 
 
 class OutlookEmailCheckRunView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
     def post(self, request):
         serializer = EmailCheckRunSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -44,9 +41,6 @@ class OutlookEmailCheckRunView(APIView):
 
 
 class OutlookEmailCheckTaskStatusView(APIView):
-    authentication_classes = []
-    permission_classes = []
-
     def get(self, request, task_id):
         task = AsyncResult(task_id)
         response_data = {
