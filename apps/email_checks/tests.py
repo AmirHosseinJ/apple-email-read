@@ -2,6 +2,7 @@ from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
@@ -9,6 +10,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from apps.email_checks.models import EmailCheckRequest
 from apps.email_checks.tasks import run_outlook_check_task
 from config.celery import app as celery_app
 
@@ -50,6 +52,11 @@ class CeleryEagerTestMixin:
 class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = get_user_model().objects.create_user(
+            username='person',
+            password='test-password',
+        )
+        self.client.force_authenticate(user=self.user)
 
     @patch('apps.email_checks.tasks.run_outlook_check')
     def test_queues_and_reads_outlook_check_through_celery(self, mocked_run_outlook_check):
@@ -71,6 +78,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
 
         self.assertEqual(queue_response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(queue_response.data['status'], 'queued')
+        self.assertTrue(queue_response.data['request_id'])
         self.assertTrue(queue_response.data['task_id'])
         mocked_run_outlook_check.assert_called_once_with(
             email='person@example.com',
@@ -79,18 +87,16 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
             headless=True,
         )
 
-        status_response = self.client.get(
-            reverse(
-                'email-check-task-status',
-                kwargs={'task_id': queue_response.data['task_id']},
-            )
-        )
-
-        self.assertEqual(status_response.status_code, status.HTTP_200_OK)
-        self.assertEqual(status_response.data['state'], 'SUCCESS')
-        self.assertEqual(status_response.data['status'], 'success')
-        self.assertEqual(status_response.data['result']['otp'], '123456')
-        self.assertEqual(status_response.data['result']['messages_checked'], 1)
+        email_check_request = EmailCheckRequest.objects.get(id=queue_response.data['request_id'])
+        self.assertEqual(email_check_request.email, 'person@example.com')
+        self.assertEqual(email_check_request.password, 'secret-password')
+        self.assertEqual(email_check_request.user, self.user)
+        self.assertEqual(email_check_request.status, 'otp_found')
+        self.assertEqual(email_check_request.otp, '123456')
+        self.assertEqual(email_check_request.total_try, 0)
+        self.assertEqual(email_check_request.task_id, queue_response.data['task_id'])
+        self.assertIsNotNone(email_check_request.start_at)
+        self.assertIsNotNone(email_check_request.finish_at)
 
 
 class OutlookEmailCheckTaskRetryTests(TestCase):
@@ -103,6 +109,12 @@ class OutlookEmailCheckTaskRetryTests(TestCase):
         failure = RuntimeError('browser failed')
         retry_request = RuntimeError('retry requested')
         mocked_run_outlook_check.side_effect = failure
+        email_check_request = EmailCheckRequest.objects.create(
+            email='person@example.com',
+            password='secret-password',
+            status='queued',
+            max_messages=1,
+        )
 
         with patch.object(run_outlook_check_task, 'retry', side_effect=retry_request) as mocked_retry:
             with self.assertRaises(RuntimeError) as raised:
@@ -110,6 +122,7 @@ class OutlookEmailCheckTaskRetryTests(TestCase):
                     email='person@example.com',
                     password='secret-password',
                     max_messages=1,
+                    request_id=email_check_request.id,
                 )
 
         self.assertIs(raised.exception, retry_request)
@@ -118,11 +131,21 @@ class OutlookEmailCheckTaskRetryTests(TestCase):
             countdown=12,
             max_retries=4,
         )
+        email_check_request.refresh_from_db()
+        self.assertEqual(email_check_request.status, 'retrying')
+        self.assertEqual(email_check_request.total_try, 1)
+        self.assertEqual(email_check_request.error_message, 'browser failed')
+        self.assertIsNone(email_check_request.finish_at)
 
 
 class OutlookEmailCheckRunViewTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = get_user_model().objects.create_user(
+            username='person',
+            password='test-password',
+        )
+        self.client.force_authenticate(user=self.user)
         self.url = reverse('email-check-run')
 
     @patch('apps.email_checks.views.run_outlook_check_task.delay')
@@ -140,13 +163,19 @@ class OutlookEmailCheckRunViewTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data['status'], 'queued')
+        self.assertTrue(response.data['request_id'])
         self.assertEqual(response.data['task_id'], 'task-123')
         self.assertIn('/api/email-checks/tasks/task-123/', response.data['status_url'])
+        email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
         mocked_delay.assert_called_once_with(
             email='person@example.com',
             password='secret-password',
             max_messages=1,
+            request_id=email_check_request.id,
         )
+        self.assertEqual(email_check_request.status, 'queued')
+        self.assertEqual(email_check_request.task_id, 'task-123')
+        self.assertEqual(email_check_request.user, self.user)
 
     def test_rejects_invalid_email(self):
         response = self.client.post(
@@ -228,6 +257,11 @@ class OutlookCheckMailCommandTests(TestCase):
 class OutlookEmailCheckTaskStatusViewTests(TestCase):
     def setUp(self):
         self.client = APIClient()
+        self.user = get_user_model().objects.create_user(
+            username='person',
+            password='test-password',
+        )
+        self.client.force_authenticate(user=self.user)
         self.url = reverse('email-check-task-status', kwargs={'task_id': 'task-123'})
 
     @patch('apps.email_checks.views.AsyncResult')

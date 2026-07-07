@@ -2,8 +2,10 @@ from argparse import BooleanOptionalAction
 from dataclasses import dataclass
 
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 from kombu.exceptions import OperationalError
 
+from apps.email_checks.models import EmailCheckRequest
 from apps.email_checks.tasks import run_outlook_check_task
 
 
@@ -33,12 +35,30 @@ class OutlookCheckMailRunner:
         return cls(OutlookCheckMailOptions.from_command_options(options))
 
     def run(self):
-        return run_outlook_check_task.delay(
+        email_check_request = EmailCheckRequest.objects.create(
             email=self.options.email,
             password=self.options.password,
+            status='queued',
             max_messages=self.options.max_messages,
-            headless=self.options.headless,
         )
+        try:
+            task = run_outlook_check_task.delay(
+                email=self.options.email,
+                password=self.options.password,
+                max_messages=self.options.max_messages,
+                headless=self.options.headless,
+                request_id=email_check_request.id,
+            )
+        except OperationalError as exc:
+            email_check_request.status = 'queue_failed'
+            email_check_request.error_message = str(exc)
+            email_check_request.finish_at = timezone.now()
+            email_check_request.save(update_fields=['status', 'error_message', 'finish_at', 'updated_at'])
+            raise
+
+        email_check_request.task_id = task.id
+        email_check_request.save(update_fields=['task_id', 'updated_at'])
+        return task
 
 
 class Command(BaseCommand):
