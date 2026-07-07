@@ -88,8 +88,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'email_read_db'),
+        'USER': os.getenv('POSTGRES_USER', 'email_read_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'email_read_password'),
+        'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -146,6 +150,16 @@ REST_FRAMEWORK = {
 
 OUTLOOK_OTP_RETRY_COUNT = env_int('OUTLOOK_OTP_RETRY_COUNT', 3)
 OUTLOOK_OTP_RETRY_WAIT_SECONDS = env_int('OUTLOOK_OTP_RETRY_WAIT_SECONDS', 10)
+
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6380/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = env_int('CELERY_TASK_TIME_LIMIT', 15 * 60)
+CELERY_WORKER_CONCURRENCY = env_int('CELERY_WORKER_CONCURRENCY', 1)
 
 LOGGING = {
     'version': 1,

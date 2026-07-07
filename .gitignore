@@ -8,3 +8,4 @@ storage/playwright/*
 storage/screenshots/*
 !storage/playwright/.gitkeep
 !storage/screenshots/.gitkeep
+/resources/
