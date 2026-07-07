@@ -1,0 +1,4 @@
+Django>=5.2,<5.3
+djangorestframework>=3.16,<3.18
+playwright>=1.54,<2
+python-dotenv>=1,<2

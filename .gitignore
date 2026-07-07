@@ -1,0 +1,10 @@
+.venv/
+.idea/
+.env
+__pycache__/
+*.py[cod]
+db.sqlite3
+storage/playwright/*
+storage/screenshots/*
+!storage/playwright/.gitkeep
+!storage/screenshots/.gitkeep
