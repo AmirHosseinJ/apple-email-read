@@ -8,6 +8,7 @@ from urllib.error import URLError
 from django.conf import settings
 
 from apps.email_checks.models import EmailCheckRequest, Webhook
+from apps.email_checks.responses import webhook_result_payload
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +18,6 @@ class UserNotification:
     webhook: Webhook
     timeout: int = settings.EMAIL_CHECK_WEBHOOK_TIMEOUT_SECONDS
 
-    @staticmethod
-    def _result_meta(result: dict[str, Any] | None, *, total_try: int) -> dict[str, Any]:
-        meta = {}
-        if result and 'attempts' in result:
-            meta['attempts'] = result['attempts']
-        meta['total_try'] = total_try
-        return meta
-
     def send_email_check_result(
         self,
         email_check_request: EmailCheckRequest,
@@ -33,14 +26,12 @@ class UserNotification:
         result: dict[str, Any] | None = None,
         error_message: str = '',
     ) -> None:
-        payload = {
-            'request_id': email_check_request.id,
-            'email': email_check_request.email,
-            'status': status,
-            'otp': email_check_request.otp or '',
-            'error_message': error_message,
-            'meta': self._result_meta(result, total_try=email_check_request.total_try),
-        }
+        payload = webhook_result_payload(
+            email_check_request,
+            status=status,
+            result=result,
+            error_message=error_message,
+        )
         self.send(payload)
 
     def send(self, payload: dict[str, Any]) -> None:
