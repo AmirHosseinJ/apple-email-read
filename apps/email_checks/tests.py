@@ -79,7 +79,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.assertEqual(queue_response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(queue_response.data['status'], 'queued')
         self.assertTrue(queue_response.data['request_id'])
-        self.assertTrue(queue_response.data['task_id'])
+        self.assertNotIn('task_id', queue_response.data)
         mocked_run_outlook_check.assert_called_once_with(
             email='person@example.com',
             password='secret-password',
@@ -94,7 +94,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.assertEqual(email_check_request.status, 'otp_found')
         self.assertEqual(email_check_request.otp, '123456')
         self.assertEqual(email_check_request.total_try, 0)
-        self.assertEqual(email_check_request.task_id, queue_response.data['task_id'])
+        self.assertTrue(email_check_request.task_id)
         self.assertIsNotNone(email_check_request.start_at)
         self.assertIsNotNone(email_check_request.finish_at)
 
@@ -164,8 +164,8 @@ class OutlookEmailCheckRunViewTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(response.data['status'], 'queued')
         self.assertTrue(response.data['request_id'])
-        self.assertEqual(response.data['task_id'], 'task-123')
-        self.assertIn('/api/email-checks/tasks/task-123/', response.data['status_url'])
+        self.assertNotIn('task_id', response.data)
+        self.assertNotIn('status_url', response.data)
         email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
         mocked_delay.assert_called_once_with(
             email='person@example.com',
@@ -262,10 +262,24 @@ class OutlookEmailCheckTaskStatusViewTests(TestCase):
             password='test-password',
         )
         self.client.force_authenticate(user=self.user)
-        self.url = reverse('email-check-task-status', kwargs={'task_id': 'task-123'})
+        self.email_check_request = EmailCheckRequest.objects.create(
+            email='person@example.com',
+            password='secret-password',
+            status='queued',
+            max_messages=1,
+            task_id='task-123',
+            user=self.user,
+        )
+        self.url = reverse(
+            'email-check-request-status',
+            kwargs={'request_id': self.email_check_request.id},
+        )
 
     @patch('apps.email_checks.views.AsyncResult')
+    @override_settings(CELERY_EMAIL_CHECK_RETRY_COUNT=4)
     def test_returns_successful_task_result(self, mocked_async_result):
+        self.email_check_request.total_try = 1
+        self.email_check_request.save(update_fields=['total_try'])
         mocked_async_result.return_value = SimpleNamespace(
             state='SUCCESS',
             result={'status': 'otp_found', 'otp': '123456'},
@@ -276,14 +290,22 @@ class OutlookEmailCheckTaskStatusViewTests(TestCase):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['task_id'], 'task-123')
+        self.assertEqual(response.data['request_id'], self.email_check_request.id)
+        self.assertNotIn('total_retries', response.data)
+        self.assertNotIn('remaining_tries', response.data)
+        self.assertEqual(response.data['meta']['total_retries'], 1)
+        self.assertEqual(response.data['meta']['remaining_tries'], 3)
+        self.assertNotIn('task_id', response.data)
         self.assertEqual(response.data['state'], 'SUCCESS')
         self.assertEqual(response.data['status'], 'success')
         self.assertEqual(response.data['result']['otp'], '123456')
         mocked_async_result.assert_called_once_with('task-123')
 
     @patch('apps.email_checks.views.AsyncResult')
+    @override_settings(CELERY_EMAIL_CHECK_RETRY_COUNT=4)
     def test_returns_pending_task_state(self, mocked_async_result):
+        self.email_check_request.total_try = 2
+        self.email_check_request.save(update_fields=['total_try'])
         mocked_async_result.return_value = SimpleNamespace(
             state='PENDING',
             successful=lambda: False,
@@ -294,3 +316,23 @@ class OutlookEmailCheckTaskStatusViewTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['status'], 'pending')
+        self.assertEqual(response.data['meta']['total_retries'], 2)
+        self.assertEqual(response.data['meta']['remaining_tries'], 2)
+
+    @override_settings(CELERY_EMAIL_CHECK_RETRY_COUNT=4)
+    def test_returns_retry_counts_without_task_id(self):
+        self.email_check_request.task_id = ''
+        self.email_check_request.status = 'queue_failed'
+        self.email_check_request.total_try = 5
+        self.email_check_request.error_message = 'broker unavailable'
+        self.email_check_request.save(
+            update_fields=['task_id', 'status', 'total_try', 'error_message'],
+        )
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'queue_failed')
+        self.assertEqual(response.data['meta']['total_retries'], 5)
+        self.assertEqual(response.data['meta']['remaining_tries'], 0)
+        self.assertEqual(response.data['detail'], 'broker unavailable')

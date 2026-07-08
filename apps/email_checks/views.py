@@ -1,5 +1,6 @@
 from celery.result import AsyncResult
-from django.urls import reverse
+from django.conf import settings
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from kombu.exceptions import OperationalError
 from rest_framework import status
@@ -49,22 +50,37 @@ class OutlookEmailCheckRunView(APIView):
             {
                 'status': 'queued',
                 'request_id': email_check_request.id,
-                'task_id': task.id,
-                'status_url': request.build_absolute_uri(
-                    reverse('email-check-task-status', kwargs={'task_id': task.id})
-                ),
             },
             status=status.HTTP_202_ACCEPTED,
         )
 
 
-class OutlookEmailCheckTaskStatusView(APIView):
-    def get(self, request, task_id):
-        task = AsyncResult(task_id)
-        response_data = {
-            'task_id': task_id,
-            'state': task.state,
+class OutlookEmailCheckRequestStatusView(APIView):
+    def get(self, request, request_id):
+        email_check_request = get_object_or_404(EmailCheckRequest, id=request_id)
+        total_retries = email_check_request.total_try
+        meta = {
+            'total_retries': total_retries,
+            'remaining_tries': max(settings.CELERY_EMAIL_CHECK_RETRY_COUNT - total_retries, 0),
         }
+        response_data = {
+            'request_id': email_check_request.id,
+        }
+
+        if not email_check_request.task_id:
+            response_data.update(
+                {
+                    'status': email_check_request.status,
+                    'state': email_check_request.status.upper(),
+                }
+            )
+            if email_check_request.error_message:
+                response_data['detail'] = email_check_request.error_message
+            response_data['meta'] = meta
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        task = AsyncResult(email_check_request.task_id)
+        response_data['state'] = task.state
 
         if task.successful():
             response_data.update(
@@ -83,4 +99,5 @@ class OutlookEmailCheckTaskStatusView(APIView):
         else:
             response_data['status'] = task.state.lower()
 
+        response_data['meta'] = meta
         return Response(response_data, status=status.HTTP_200_OK)
