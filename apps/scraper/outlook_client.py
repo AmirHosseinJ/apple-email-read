@@ -7,7 +7,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from apps.scraper import selectors
 from apps.scraper.browser import chromium_page
 from apps.scraper.config import otp_retry_count, otp_retry_wait_seconds
-from apps.scraper.exceptions import ScraperTimeout
+from apps.scraper.exceptions import LoginFailed, OutlookHighDemand, ScraperTimeout
 from apps.scraper.helpers import click_and_switch_tab_if_opened, wait_and_click_first
 
 logger = logging.getLogger(__name__)
@@ -16,6 +16,8 @@ OUTLOOK_LOGIN_URL = "https://outlook.live.com/mail/"
 DEFAULT_TIMEOUT_MS = 60_000
 OTP_PATTERN = re.compile(r'(?<!\d)(\d{6})(?!\d)')
 APPLE_MARKERS = ('apple', 'icloud')
+HIGH_DEMAND_ERROR_MESSAGE = 'We are currently experiencing high demand. Please wait and try again later.'
+INCORRECT_PASSWORD_ERROR_MESSAGE = 'That password is incorrect for your Microsoft account.'
 
 
 class OutlookClient:
@@ -27,6 +29,18 @@ class OutlookClient:
     def open_login_page(self) -> None:
         logger.info("Navigating to Outlook mail page")
         self.page.goto(OUTLOOK_LOGIN_URL, wait_until="domcontentloaded")
+        self.page.wait_for_timeout(2000)
+        self.raise_if_high_demand_page()
+
+    def raise_if_high_demand_page(self) -> None:
+        high_demand_message = self.page.locator(selectors.HIGH_DEMAND_MESSAGE)
+
+        try:
+            high_demand_message.wait_for(state="visible", timeout=3_000)
+        except PlaywrightTimeoutError:
+            return
+
+        raise OutlookHighDemand(HIGH_DEMAND_ERROR_MESSAGE)
 
     def start_login_sequence(self) -> None:
         self.open_login_page()
@@ -52,6 +66,16 @@ class OutlookClient:
 
     def submit_password(self) -> None:
         wait_and_click_first(self.page, selectors.SUBMIT_PASSWORD_BUTTON, 'Next button (password)')
+
+    def raise_if_incorrect_password(self) -> None:
+        incorrect_password_error = self.page.locator(selectors.INCORRECT_PASSWORD_ERROR)
+
+        try:
+            incorrect_password_error.wait_for(state="visible", timeout=5_000)
+        except PlaywrightTimeoutError:
+            return
+
+        raise LoginFailed(INCORRECT_PASSWORD_ERROR_MESSAGE)
 
     def is_get_code_sign_in_page(self) -> bool:
         title = self.page.locator(selectors.GET_CODE_SIGN_IN_TITLE)
@@ -100,6 +124,37 @@ class OutlookClient:
             return False
 
         self.click_stay_signed_in_no()
+        return True
+
+    def is_protect_account_page(self, *, timeout: int = 8_000) -> bool:
+        title = self.page.locator(selectors.PROTECT_ACCOUNT_TITLE)
+
+        try:
+            title.wait_for(state="visible", timeout=timeout)
+        except PlaywrightTimeoutError:
+            return False
+
+        return True
+
+    def click_protect_account_skip(self) -> None:
+        # skip_button = self.page.locator(selectors.PROTECT_ACCOUNT_SKIP_BUTTON).first
+        # skip_button.wait_for(state="visible", timeout=15_000)
+        # skip_button.click()
+        wait_and_click_first(self.page, selectors.PROTECT_ACCOUNT_SKIP_BUTTON, 'Skip for now', timeout=15_000)
+
+    def skip_protect_account_if_shown(self) -> bool:
+        if not self.is_protect_account_page():
+            return False
+
+        for attempt in range(2):
+            self.click_protect_account_skip()
+            self.page.wait_for_timeout(1_000)
+
+            if not self.is_protect_account_page(timeout=3_000):
+                return True
+
+            logger.info("Protect account page still visible after skip attempt %s", attempt + 1)
+
         return True
 
     def wait_for_successful_login(self) -> None:
@@ -203,6 +258,10 @@ def run_email_entry_sequence(
                 client.fill_password(password)
                 client.submit_password()
                 status = 'password_filled'
+                client.raise_if_incorrect_password()
+
+                if client.skip_protect_account_if_shown():
+                    status = 'protect_account_skipped'
 
                 if client.decline_stay_signed_in_if_shown():
                     status = 'stay_signed_in_declined'

@@ -4,31 +4,58 @@ from unittest.mock import patch
 
 from apps.scraper import selectors
 from apps.scraper.config import browser_headless, otp_retry_count, otp_retry_wait_seconds
-from apps.scraper.outlook_client import OUTLOOK_LOGIN_URL, OutlookClient, extract_latest_apple_otp, safe_url
+from apps.scraper.exceptions import LoginFailed, OutlookHighDemand
+from apps.scraper.outlook_client import (
+    HIGH_DEMAND_ERROR_MESSAGE,
+    INCORRECT_PASSWORD_ERROR_MESSAGE,
+    OUTLOOK_LOGIN_URL,
+    OutlookClient,
+    extract_latest_apple_otp,
+    safe_url,
+)
 
 
 class FakeLocator:
-    def __init__(self, *, visible=True, text=''):
+    def __init__(self, *, visible=True, text='', visible_sequence=None):
         self.filled_value = None
         self.waited_for = None
+        self.wait_calls = []
         self.visible = visible
+        self.visible_sequence = list(visible_sequence) if visible_sequence is not None else None
         self.clicked = False
+        self.click_count = 0
         self.first = self
         self.pressed_key = None
         self.text = text
 
     def wait_for(self, *, state, timeout):
-        if not self.visible:
+        visible = self.visible
+        if self.visible_sequence is not None:
+            visible = self.visible_sequence.pop(0) if self.visible_sequence else self.visible
+
+        self.waited_for = {'state': state, 'timeout': timeout}
+        self.wait_calls.append(self.waited_for)
+
+        if state == 'visible' and not visible:
             from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
             raise PlaywrightTimeoutError('not visible')
-        self.waited_for = {'state': state, 'timeout': timeout}
 
     def fill(self, value):
         self.filled_value = value
 
-    def click(self):
+    def click(self, **kwargs):
         self.clicked = True
+        self.click_count += 1
+
+    def highlight(self):
+        pass
+
+    def scroll_into_view_if_needed(self):
+        pass
+
+    def bounding_box(self):
+        return None
 
     def press(self, key):
         self.pressed_key = key
@@ -67,11 +94,26 @@ class FakePage:
 class OutlookClientTests(SimpleTestCase):
     def test_open_login_page(self):
         page = FakePage()
+        page.locators[selectors.HIGH_DEMAND_MESSAGE] = FakeLocator(visible=False)
         client = OutlookClient(page)
 
         client.open_login_page()
 
         self.assertEqual(page.goto_call, {'url': OUTLOOK_LOGIN_URL, 'wait_until': 'domcontentloaded'})
+
+    def test_open_login_page_raises_for_high_demand_page(self):
+        page = FakePage()
+        page.locators[selectors.HIGH_DEMAND_MESSAGE] = FakeLocator()
+        client = OutlookClient(page)
+
+        with self.assertRaisesMessage(OutlookHighDemand, HIGH_DEMAND_ERROR_MESSAGE):
+            client.open_login_page()
+
+        self.assertEqual(page.goto_call, {'url': OUTLOOK_LOGIN_URL, 'wait_until': 'domcontentloaded'})
+        self.assertEqual(
+            page.locators[selectors.HIGH_DEMAND_MESSAGE].waited_for,
+            {'state': 'visible', 'timeout': 3_000},
+        )
 
     def test_fill_email(self):
         page = FakePage()
@@ -96,6 +138,26 @@ class OutlookClientTests(SimpleTestCase):
         self.assertEqual(page.last_selector, selectors.PASSWORD_INPUT)
         self.assertEqual(password_locator.waited_for, {'state': 'visible', 'timeout': 15_000})
         self.assertEqual(password_locator.filled_value, 'secret-password')
+
+    def test_raise_if_incorrect_password_raises_when_error_is_visible(self):
+        page = FakePage()
+        client = OutlookClient(page)
+
+        with self.assertRaisesMessage(LoginFailed, INCORRECT_PASSWORD_ERROR_MESSAGE):
+            client.raise_if_incorrect_password()
+
+        error_locator = page.locators[selectors.INCORRECT_PASSWORD_ERROR]
+        self.assertEqual(error_locator.waited_for, {'state': 'visible', 'timeout': 5_000})
+
+    def test_raise_if_incorrect_password_returns_when_error_is_absent(self):
+        page = FakePage()
+        page.locators[selectors.INCORRECT_PASSWORD_ERROR] = FakeLocator(visible=False)
+        client = OutlookClient(page)
+
+        client.raise_if_incorrect_password()
+
+        error_locator = page.locators[selectors.INCORRECT_PASSWORD_ERROR]
+        self.assertEqual(error_locator.waited_for, {'state': 'visible', 'timeout': 5_000})
 
     def test_use_password_if_code_prompt_is_shown(self):
         page = FakePage()
@@ -144,6 +206,54 @@ class OutlookClientTests(SimpleTestCase):
 
         self.assertFalse(result)
         self.assertNotIn(selectors.STAY_SIGNED_IN_NO_BUTTON, page.locators)
+
+    def test_skip_protect_account_if_shown(self):
+        page = FakePage()
+        page.locators[selectors.PROTECT_ACCOUNT_TITLE] = FakeLocator(visible_sequence=[True, False])
+        client = OutlookClient(page)
+
+        result = client.skip_protect_account_if_shown()
+
+        title_locator = page.locators[selectors.PROTECT_ACCOUNT_TITLE]
+        skip_button_locator = page.locators[selectors.PROTECT_ACCOUNT_SKIP_BUTTON]
+
+        self.assertTrue(result)
+        self.assertEqual(title_locator.wait_calls[0], {'state': 'visible', 'timeout': 8_000})
+        self.assertEqual(skip_button_locator.waited_for, {'state': 'visible', 'timeout': 15_000})
+        self.assertTrue(skip_button_locator.clicked)
+        self.assertEqual(skip_button_locator.click_count, 1)
+        self.assertEqual(page.waited_timeout, 1_000)
+
+    def test_skip_protect_account_if_shown_reclicks_when_page_stays_visible(self):
+        page = FakePage()
+        page.locators[selectors.PROTECT_ACCOUNT_TITLE] = FakeLocator(visible_sequence=[True, True, False])
+        client = OutlookClient(page)
+
+        result = client.skip_protect_account_if_shown()
+
+        title_locator = page.locators[selectors.PROTECT_ACCOUNT_TITLE]
+        skip_button_locator = page.locators[selectors.PROTECT_ACCOUNT_SKIP_BUTTON]
+
+        self.assertTrue(result)
+        self.assertEqual(
+            title_locator.wait_calls,
+            [
+                {'state': 'visible', 'timeout': 8_000},
+                {'state': 'visible', 'timeout': 3_000},
+                {'state': 'visible', 'timeout': 3_000},
+            ],
+        )
+        self.assertEqual(skip_button_locator.click_count, 2)
+
+    def test_skip_protect_account_if_shown_returns_false_when_absent(self):
+        page = FakePage()
+        page.locators[selectors.PROTECT_ACCOUNT_TITLE] = FakeLocator(visible=False)
+        client = OutlookClient(page)
+
+        result = client.skip_protect_account_if_shown()
+
+        self.assertFalse(result)
+        self.assertNotIn(selectors.PROTECT_ACCOUNT_SKIP_BUTTON, page.locators)
 
     def test_wait_for_successful_login(self):
         page = FakePage()

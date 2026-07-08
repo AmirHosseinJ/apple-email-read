@@ -12,3 +12,7 @@ class MfaRequired(OutlookScraperError):
 
 class ScraperTimeout(OutlookScraperError):
     pass
+
+
+class OutlookHighDemand(OutlookScraperError):
+    pass

@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from apps.email_checks.models import EmailCheckRequest
 from apps.email_checks.services import run_outlook_check
+from apps.scraper.exceptions import LoginFailed
 
 
 def _update_email_check_request(request_id: int | None, **fields) -> None:
@@ -42,6 +43,15 @@ def run_outlook_check_task(
             max_messages=max_messages,
             headless=headless,
         )
+    except LoginFailed as exc:
+        _update_email_check_request(
+            request_id,
+            status='failed',
+            total_try=self.request.retries,
+            error_message=str(exc),
+            finish_at=timezone.now(),
+        )
+        raise
     except Exception as exc:
         total_try = min(self.request.retries + 1, settings.CELERY_EMAIL_CHECK_RETRY_COUNT)
         retry_status = 'retrying'

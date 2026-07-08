@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from apps.email_checks.models import EmailCheckRequest
 from apps.email_checks.tasks import run_outlook_check_task
+from apps.scraper.exceptions import LoginFailed
 from config.celery import app as celery_app
 
 
@@ -100,6 +101,37 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
 
 
 class OutlookEmailCheckTaskRetryTests(TestCase):
+    @patch('apps.email_checks.tasks.run_outlook_check')
+    def test_does_not_retry_incorrect_password(self, mocked_run_outlook_check):
+        failure = LoginFailed('That password is incorrect for your Microsoft account.')
+        mocked_run_outlook_check.side_effect = failure
+        email_check_request = EmailCheckRequest.objects.create(
+            email='person@example.com',
+            password='secret-password',
+            status='queued',
+            max_messages=1,
+        )
+
+        with patch.object(run_outlook_check_task, 'retry') as mocked_retry:
+            with self.assertRaises(LoginFailed) as raised:
+                run_outlook_check_task.run(
+                    email='person@example.com',
+                    password='secret-password',
+                    max_messages=1,
+                    request_id=email_check_request.id,
+                )
+
+        self.assertIs(raised.exception, failure)
+        mocked_retry.assert_not_called()
+        email_check_request.refresh_from_db()
+        self.assertEqual(email_check_request.status, 'failed')
+        self.assertEqual(email_check_request.total_try, 0)
+        self.assertEqual(
+            email_check_request.error_message,
+            'That password is incorrect for your Microsoft account.',
+        )
+        self.assertIsNotNone(email_check_request.finish_at)
+
     @override_settings(
         CELERY_EMAIL_CHECK_RETRY_COUNT=4,
         CELERY_EMAIL_CHECK_RETRY_DELAY_SECONDS=12,
