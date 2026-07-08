@@ -208,6 +208,55 @@ class OutlookEmailCheckRunViewTests(TestCase):
         self.assertEqual(email_check_request.status, 'queued')
         self.assertEqual(email_check_request.task_id, 'task-123')
         self.assertEqual(email_check_request.user, self.user)
+        self.assertIsNone(email_check_request.webhook)
+
+    @patch('apps.email_checks.views.run_outlook_check_task.delay')
+    def test_links_outlook_check_to_webhook_for_request_source_ip(self, mocked_delay):
+        mocked_delay.return_value = SimpleNamespace(id='task-123')
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+            header_key='X-Callback-Token',
+            header_value='secret',
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                'email': 'person@example.com',
+                'password': 'secret-password',
+                'max_messages': 1,
+            },
+            format='json',
+            REMOTE_ADDR='203.0.113.10',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
+        self.assertEqual(email_check_request.webhook, webhook)
+
+    @patch('apps.email_checks.views.run_outlook_check_task.delay')
+    def test_leaves_outlook_check_webhook_empty_without_matching_source_ip(self, mocked_delay):
+        mocked_delay.return_value = SimpleNamespace(id='task-123')
+        Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                'email': 'person@example.com',
+                'password': 'secret-password',
+                'max_messages': 1,
+            },
+            format='json',
+            REMOTE_ADDR='198.51.100.20',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
+        self.assertIsNone(email_check_request.webhook)
 
     def test_rejects_invalid_email(self):
         response = self.client.post(

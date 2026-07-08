@@ -22,12 +22,14 @@ class OutlookEmailCheckRunView(APIView):
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+        webhook = Webhook.objects.filter(ip=get_request_ip(request)).first()
         email_check_request = EmailCheckRequest.objects.create(
             email=data['email'],
             password=data['password'],
             status='queued',
             max_messages=data['max_messages'],
             user=request.user if request.user.is_authenticated else None,
+            webhook=webhook,
         )
 
         try:

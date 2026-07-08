@@ -16,6 +16,13 @@ class EmailCheckRequest(models.Model):
     start_at = models.DateTimeField(blank=True, null=True)
     finish_at = models.DateTimeField(blank=True, null=True)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, blank=True, null=True)
+    webhook = models.ForeignKey(
+        'Webhook',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name='email_check_requests',
+    )
 
     class Meta:
         db_table = 'email_checks_emailcheckrequest'
