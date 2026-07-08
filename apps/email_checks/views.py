@@ -23,6 +23,15 @@ class OutlookEmailCheckRunView(APIView):
 
         data = serializer.validated_data
         webhook = Webhook.objects.filter(ip=get_request_ip(request)).first()
+        if webhook is None:
+            return Response(
+                {
+                    'status': 'webhook_not_configured',
+                    'detail': 'No webhook is configured for this request source IP.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         email_check_request = EmailCheckRequest.objects.create(
             email=data['email'],
             password=data['password'],

@@ -66,6 +66,10 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
             'otp': '123456',
             'messages_checked': 1,
         }
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+        )
 
         queue_response = self.client.post(
             reverse('email-check-run'),
@@ -75,6 +79,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
                 'max_messages': 1,
             },
             format='json',
+            REMOTE_ADDR='203.0.113.10',
         )
 
         self.assertEqual(queue_response.status_code, status.HTTP_202_ACCEPTED)
@@ -92,6 +97,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.assertEqual(email_check_request.email, 'person@example.com')
         self.assertEqual(email_check_request.password, 'secret-password')
         self.assertEqual(email_check_request.user, self.user)
+        self.assertEqual(email_check_request.webhook, webhook)
         self.assertEqual(email_check_request.status, 'otp_found')
         self.assertEqual(email_check_request.otp, '123456')
         self.assertEqual(email_check_request.total_try, 0)
@@ -183,6 +189,10 @@ class OutlookEmailCheckRunViewTests(TestCase):
     @patch('apps.email_checks.views.run_outlook_check_task.delay')
     def test_queues_outlook_check(self, mocked_delay):
         mocked_delay.return_value = SimpleNamespace(id='task-123')
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+        )
         response = self.client.post(
             self.url,
             {
@@ -191,6 +201,7 @@ class OutlookEmailCheckRunViewTests(TestCase):
                 'max_messages': 1,
             },
             format='json',
+            REMOTE_ADDR='203.0.113.10',
         )
 
         self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
@@ -208,7 +219,7 @@ class OutlookEmailCheckRunViewTests(TestCase):
         self.assertEqual(email_check_request.status, 'queued')
         self.assertEqual(email_check_request.task_id, 'task-123')
         self.assertEqual(email_check_request.user, self.user)
-        self.assertIsNone(email_check_request.webhook)
+        self.assertEqual(email_check_request.webhook, webhook)
 
     @patch('apps.email_checks.views.run_outlook_check_task.delay')
     def test_links_outlook_check_to_webhook_for_request_source_ip(self, mocked_delay):
@@ -236,7 +247,7 @@ class OutlookEmailCheckRunViewTests(TestCase):
         self.assertEqual(email_check_request.webhook, webhook)
 
     @patch('apps.email_checks.views.run_outlook_check_task.delay')
-    def test_leaves_outlook_check_webhook_empty_without_matching_source_ip(self, mocked_delay):
+    def test_rejects_outlook_check_without_matching_source_ip_webhook(self, mocked_delay):
         mocked_delay.return_value = SimpleNamespace(id='task-123')
         Webhook.objects.create(
             ip='203.0.113.10',
@@ -254,9 +265,11 @@ class OutlookEmailCheckRunViewTests(TestCase):
             REMOTE_ADDR='198.51.100.20',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
-        email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
-        self.assertIsNone(email_check_request.webhook)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['status'], 'webhook_not_configured')
+        self.assertEqual(response.data['detail'], 'No webhook is configured for this request source IP.')
+        self.assertFalse(EmailCheckRequest.objects.exists())
+        mocked_delay.assert_not_called()
 
     def test_rejects_invalid_email(self):
         response = self.client.post(
