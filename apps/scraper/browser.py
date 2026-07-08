@@ -4,7 +4,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from apps.scraper.config import browser_headless
+from apps.scraper.config import browser_headless, browser_proxy
 
 
 @contextmanager
@@ -27,20 +27,29 @@ def chromium_page(*, headless: bool | None = None):
 
 
 def _browser_launch_options() -> dict:
+    options = {}
+    proxy = browser_proxy()
+    if proxy:
+        options['proxy'] = proxy
+
     executable_path = os.getenv('PLAYWRIGHT_BROWSER_EXECUTABLE')
     if executable_path:
-        return {'executable_path': executable_path}
+        options['executable_path'] = executable_path
+        return options
 
     channel = os.getenv('PLAYWRIGHT_BROWSER_CHANNEL')
     if channel:
-        return {'channel': channel}
+        options['channel'] = channel
+        return options
 
     chrome_path = Path('C:/Program Files/Google/Chrome/Application/chrome.exe')
     if chrome_path.exists():
-        return {'executable_path': str(chrome_path)}
+        options['executable_path'] = str(chrome_path)
+        return options
 
     edge_path = Path('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe')
     if edge_path.exists():
-        return {'executable_path': str(edge_path)}
+        options['executable_path'] = str(edge_path)
+        return options
 
-    return {}
+    return options

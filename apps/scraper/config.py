@@ -11,3 +11,16 @@ def otp_retry_wait_seconds() -> int:
 
 def browser_headless() -> bool:
     return settings.EMAIL_CHECKS_HEADLESS
+
+
+def browser_proxy() -> dict | None:
+    if not settings.USE_PROXY or not settings.PROXY_SERVER:
+        return None
+
+    proxy = {'server': settings.PROXY_SERVER}
+    if settings.PROXY_USERNAME:
+        proxy['username'] = settings.PROXY_USERNAME
+    if settings.PROXY_PASSWORD:
+        proxy['password'] = settings.PROXY_PASSWORD
+
+    return proxy

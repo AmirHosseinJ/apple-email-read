@@ -3,7 +3,8 @@ from django.test import override_settings
 from unittest.mock import patch
 
 from apps.scraper import selectors
-from apps.scraper.config import browser_headless, otp_retry_count, otp_retry_wait_seconds
+from apps.scraper.browser import _browser_launch_options
+from apps.scraper.config import browser_headless, browser_proxy, otp_retry_count, otp_retry_wait_seconds
 from apps.scraper.exceptions import LoginFailed, OutlookHighDemand
 from apps.scraper.outlook_client import (
     HIGH_DEMAND_ERROR_MESSAGE,
@@ -329,3 +330,36 @@ class OutlookClientTests(SimpleTestCase):
     @override_settings(EMAIL_CHECKS_HEADLESS=False)
     def test_browser_headless_config_reads_django_settings(self):
         self.assertFalse(browser_headless())
+
+    @override_settings(USE_PROXY=False, PROXY_SERVER='http://proxy.example:823')
+    def test_browser_proxy_returns_none_when_disabled(self):
+        self.assertIsNone(browser_proxy())
+
+    @override_settings(
+        USE_PROXY=True,
+        PROXY_SERVER='http://proxy.example:823',
+        PROXY_USERNAME='proxy-user',
+        PROXY_PASSWORD='proxy-password',
+    )
+    def test_browser_proxy_reads_django_settings(self):
+        self.assertEqual(
+            browser_proxy(),
+            {
+                'server': 'http://proxy.example:823',
+                'username': 'proxy-user',
+                'password': 'proxy-password',
+            },
+        )
+
+    @override_settings(
+        USE_PROXY=True,
+        PROXY_SERVER='http://proxy.example:823',
+        PROXY_USERNAME='',
+        PROXY_PASSWORD='',
+    )
+    @patch('apps.scraper.browser.Path.exists', return_value=False)
+    def test_browser_launch_options_include_proxy(self, mocked_exists):
+        self.assertEqual(
+            _browser_launch_options(),
+            {'proxy': {'server': 'http://proxy.example:823'}},
+        )
