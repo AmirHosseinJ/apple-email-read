@@ -3,7 +3,7 @@ from django.test import override_settings
 from unittest.mock import patch
 
 from apps.scraper import selectors
-from apps.scraper.config import otp_retry_count, otp_retry_wait_seconds
+from apps.scraper.config import browser_headless, otp_retry_count, otp_retry_wait_seconds
 from apps.scraper.outlook_client import OUTLOOK_LOGIN_URL, OutlookClient, extract_latest_apple_otp, safe_url
 
 
@@ -215,3 +215,7 @@ class OutlookClientTests(SimpleTestCase):
     def test_otp_retry_config_reads_django_settings(self):
         self.assertEqual(otp_retry_count(), 7)
         self.assertEqual(otp_retry_wait_seconds(), 12)
+
+    @override_settings(EMAIL_CHECKS_HEADLESS=False)
+    def test_browser_headless_config_reads_django_settings(self):
+        self.assertFalse(browser_headless())

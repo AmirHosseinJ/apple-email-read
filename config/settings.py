@@ -29,6 +29,14 @@ def env_int(name, default):
         return default
 
 
+def env_bool(name, default):
+    value = os.getenv(name)
+    if value is None:
+        return default
+
+    return value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -160,6 +168,7 @@ SIMPLE_JWT = {
 
 OUTLOOK_OTP_RETRY_COUNT = env_int('OUTLOOK_OTP_RETRY_COUNT', 3)
 OUTLOOK_OTP_RETRY_WAIT_SECONDS = env_int('OUTLOOK_OTP_RETRY_WAIT_SECONDS', 10)
+EMAIL_CHECKS_HEADLESS = env_bool('EMAIL_CHECKS_HEADLESS', True)
 
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6380/0')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', CELERY_BROKER_URL)

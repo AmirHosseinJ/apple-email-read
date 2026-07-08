@@ -84,7 +84,7 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
             email='person@example.com',
             password='secret-password',
             max_messages=1,
-            headless=True,
+            headless=None,
         )
 
         email_check_request = EmailCheckRequest.objects.get(id=queue_response.data['request_id'])
@@ -218,7 +218,7 @@ class OutlookCheckMailCommandTests(TestCase):
 
         runner = mocked_run.call_args.args[0]
         self.assertEqual(runner.options.max_messages, 10)
-        self.assertTrue(runner.options.headless)
+        self.assertIsNone(runner.options.headless)
 
     @patch('apps.email_checks.management.commands.outlook_check_mail_celery.OutlookCheckMailRunner.run', autospec=True)
     def test_allows_disabling_headless_browser(self, mocked_run):
@@ -234,6 +234,21 @@ class OutlookCheckMailCommandTests(TestCase):
 
         runner = mocked_run.call_args.args[0]
         self.assertFalse(runner.options.headless)
+
+    @patch('apps.email_checks.management.commands.outlook_check_mail_celery.OutlookCheckMailRunner.run', autospec=True)
+    def test_allows_enabling_headless_browser(self, mocked_run):
+        mocked_run.return_value = SimpleNamespace(id='task-123')
+
+        call_command(
+            'outlook_check_mail_celery',
+            email='person@example.com',
+            password='secret-password',
+            headless=True,
+            stdout=StringIO(),
+        )
+
+        runner = mocked_run.call_args.args[0]
+        self.assertTrue(runner.options.headless)
 
     def test_rejects_invalid_max_messages(self):
         with self.assertRaisesMessage(CommandError, '--max-messages must be at least 1.'):
@@ -252,6 +267,43 @@ class OutlookCheckMailCommandTests(TestCase):
                 password='secret-password',
                 max_messages=51,
             )
+
+
+class OutlookLoginPreviewCommandTests(TestCase):
+    @patch('apps.email_checks.management.commands.outlook_login_preview.OutlookLoginPreviewRunner.run', autospec=True)
+    def test_uses_env_headless_by_default(self, mocked_run):
+        mocked_run.return_value = {
+            'status': 'email_submitted',
+            'title': 'Outlook',
+            'current_url': 'https://outlook.live.com/mail/',
+        }
+
+        call_command(
+            'outlook_login_preview',
+            email='person@example.com',
+            stdout=StringIO(),
+        )
+
+        runner = mocked_run.call_args.args[0]
+        self.assertIsNone(runner.options.headless)
+
+    @patch('apps.email_checks.management.commands.outlook_login_preview.OutlookLoginPreviewRunner.run', autospec=True)
+    def test_allows_overriding_headless_browser(self, mocked_run):
+        mocked_run.return_value = {
+            'status': 'email_submitted',
+            'title': 'Outlook',
+            'current_url': 'https://outlook.live.com/mail/',
+        }
+
+        call_command(
+            'outlook_login_preview',
+            email='person@example.com',
+            headless=False,
+            stdout=StringIO(),
+        )
+
+        runner = mocked_run.call_args.args[0]
+        self.assertFalse(runner.options.headless)
 
 
 class OutlookEmailCheckTaskStatusViewTests(TestCase):

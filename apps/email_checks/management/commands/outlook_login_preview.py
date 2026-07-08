@@ -1,3 +1,4 @@
+from argparse import BooleanOptionalAction
 from dataclasses import dataclass
 
 from django.core.management.base import BaseCommand, CommandError
@@ -10,7 +11,7 @@ from apps.scraper.outlook_client import run_email_entry_sequence
 class OutlookLoginPreviewOptions:
     email: str
     password: str | None
-    headless: bool
+    headless: bool | None
     hold_open_seconds: int
 
     @classmethod
@@ -61,8 +62,9 @@ class Command(BaseCommand):
         parser.add_argument('--password')
         parser.add_argument(
             '--headless',
-            action='store_true',
-            help='Run without showing the browser window.',
+            action=BooleanOptionalAction,
+            default=None,
+            help='Override EMAIL_CHECKS_HEADLESS for this command run.',
         )
         parser.add_argument(
             '--hold-open-seconds',

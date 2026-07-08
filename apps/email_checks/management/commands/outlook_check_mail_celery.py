@@ -14,7 +14,7 @@ class OutlookCheckMailOptions:
     email: str
     password: str
     max_messages: int
-    headless: bool
+    headless: bool | None
 
     @classmethod
     def from_command_options(cls, options):
@@ -76,8 +76,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--headless',
             action=BooleanOptionalAction,
-            default=True,
-            help='Run the Outlook browser in headless mode. Defaults to true.',
+            default=None,
+            help='Override EMAIL_CHECKS_HEADLESS for this command run.',
         )
 
     def handle(self, *args, **options):

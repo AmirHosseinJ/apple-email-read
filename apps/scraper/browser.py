@@ -4,12 +4,16 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from apps.scraper.config import browser_headless
+
 
 @contextmanager
-def chromium_page(*, headless: bool = True):
+def chromium_page(*, headless: bool | None = None):
+    resolved_headless = browser_headless() if headless is None else headless
+
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
-            headless=headless,
+            headless=resolved_headless,
             **_browser_launch_options(),
         )
         context = browser.new_context()

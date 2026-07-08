@@ -185,7 +185,7 @@ def run_email_entry_sequence(
     *,
     email: str,
     password: str | None = None,
-    headless: bool = False,
+    headless: bool | None = None,
     hold_open_seconds: int = 0,
 ) -> dict:
     try:
@@ -234,7 +234,7 @@ def check_outlook_email(
     email: str,
     password: str,
     max_messages: int = 10,
-    headless: bool = True,
+    headless: bool | None = None,
 ) -> dict:
     return run_email_entry_sequence(
         email=email,

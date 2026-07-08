@@ -24,7 +24,7 @@ def run_outlook_check_task(
     email: str,
     password: str,
     max_messages: int,
-    headless: bool = True,
+    headless: bool | None = None,
     request_id: int | None = None,
 ) -> dict:
     _update_email_check_request(
