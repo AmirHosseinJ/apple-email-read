@@ -180,6 +180,7 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = env_int('CELERY_TASK_TIME_LIMIT', 15 * 60)
 CELERY_EMAIL_CHECK_RETRY_COUNT = env_int('CELERY_EMAIL_CHECK_RETRY_COUNT', 3)
 CELERY_EMAIL_CHECK_RETRY_DELAY_SECONDS = env_int('CELERY_EMAIL_CHECK_RETRY_DELAY_SECONDS', 10)
+EMAIL_CHECK_WEBHOOK_TIMEOUT_SECONDS = env_int('EMAIL_CHECK_WEBHOOK_TIMEOUT_SECONDS', 10)
 
 LOGGING = {
     'version': 1,
@@ -191,6 +192,11 @@ LOGGING = {
     },
     'loggers': {
         'apps.scraper': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps.email_checks': {
             'handlers': ['console'],
             'level': 'INFO',
             'propagate': False,

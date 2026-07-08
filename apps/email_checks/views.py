@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.email_checks.models import EmailCheckRequest, Webhook
+from apps.email_checks.notifications import UserNotification
 from apps.email_checks.serializers import EmailCheckRunSerializer, WebhookQuerySerializer
 from apps.email_checks.tasks import run_outlook_check_task
 
@@ -53,6 +54,11 @@ class OutlookEmailCheckRunView(APIView):
             email_check_request.error_message = str(exc)
             email_check_request.finish_at = timezone.now()
             email_check_request.save(update_fields=['status', 'error_message', 'finish_at', 'updated_at'])
+            UserNotification(webhook).send_email_check_result(
+                email_check_request,
+                status='queue_failed',
+                error_message=str(exc),
+            )
             return Response(
                 {'detail': f'Failed to queue email check task: {exc}'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -1,3 +1,4 @@
+import json
 from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -7,6 +8,8 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
+from kombu.exceptions import OperationalError
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -60,10 +63,14 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.client.force_authenticate(user=self.user)
 
     @patch('apps.email_checks.tasks.run_outlook_check')
-    def test_queues_and_reads_outlook_check_through_celery(self, mocked_run_outlook_check):
+    @patch('apps.email_checks.notifications.request.urlopen')
+    def test_queues_and_reads_outlook_check_through_celery(self, mocked_urlopen, mocked_run_outlook_check):
+        mocked_urlopen.return_value.__enter__.return_value.read.return_value = b''
         mocked_run_outlook_check.return_value = {
             'status': 'otp_found',
             'otp': '123456',
+            'found': True,
+            'attempts': 1,
             'messages_checked': 1,
         }
         webhook = Webhook.objects.create(
@@ -104,6 +111,21 @@ class OutlookEmailCheckCeleryFlowTests(CeleryEagerTestMixin, TestCase):
         self.assertTrue(email_check_request.task_id)
         self.assertIsNotNone(email_check_request.start_at)
         self.assertIsNotNone(email_check_request.finish_at)
+
+        webhook_request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(webhook_request.full_url, 'https://webhook.site/callback')
+        self.assertEqual(webhook_request.get_method(), 'POST')
+        payload = json.loads(webhook_request.data.decode('utf-8'))
+        self.assertEqual(payload['request_id'], email_check_request.id)
+        self.assertEqual(payload['email'], 'person@example.com')
+        self.assertEqual(payload['status'], 'otp_found')
+        self.assertEqual(payload['otp'], '123456')
+        self.assertEqual(payload['error_message'], '')
+        self.assertNotIn('result', payload)
+        self.assertNotIn('total_try', payload)
+        self.assertNotIn('finish_at', payload)
+        self.assertEqual(payload['meta'], {'attempts': 1, 'total_try': 0})
+        self.assertEqual(list(payload.keys())[-1], 'meta')
 
 
 class OutlookEmailCheckTaskRetryTests(TestCase):
@@ -246,6 +268,37 @@ class OutlookEmailCheckRunViewTests(TestCase):
         email_check_request = EmailCheckRequest.objects.get(id=response.data['request_id'])
         self.assertEqual(email_check_request.webhook, webhook)
 
+    @patch('apps.email_checks.views.UserNotification')
+    @patch('apps.email_checks.views.run_outlook_check_task.delay')
+    def test_notifies_webhook_when_queue_fails(self, mocked_delay, mocked_user_notification):
+        failure = OperationalError('broker unavailable')
+        mocked_delay.side_effect = failure
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                'email': 'person@example.com',
+                'password': 'secret-password',
+                'max_messages': 1,
+            },
+            format='json',
+            REMOTE_ADDR='203.0.113.10',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        email_check_request = EmailCheckRequest.objects.get()
+        self.assertEqual(email_check_request.status, 'queue_failed')
+        mocked_user_notification.assert_called_once_with(webhook)
+        mocked_user_notification.return_value.send_email_check_result.assert_called_once_with(
+            email_check_request,
+            status='queue_failed',
+            error_message='broker unavailable',
+        )
+
     @patch('apps.email_checks.views.run_outlook_check_task.delay')
     def test_rejects_outlook_check_without_matching_source_ip_webhook(self, mocked_delay):
         mocked_delay.return_value = SimpleNamespace(id='task-123')
@@ -282,6 +335,93 @@ class OutlookEmailCheckRunViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class UserNotificationTests(TestCase):
+    @patch('apps.email_checks.notifications.request.urlopen')
+    def test_sends_email_check_result_to_configured_webhook(self, mocked_urlopen):
+        mocked_urlopen.return_value.__enter__.return_value.read.return_value = b''
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+            header_key='X-Callback-Token',
+            header_value='secret',
+        )
+        email_check_request = EmailCheckRequest.objects.create(
+            email='person@example.com',
+            password='secret-password',
+            status='otp_found',
+            otp='123456',
+            total_try=0,
+            max_messages=1,
+            finish_at=timezone.now(),
+            webhook=webhook,
+        )
+
+        from apps.email_checks.notifications import UserNotification
+
+        UserNotification(webhook).send_email_check_result(
+            email_check_request,
+            status='otp_found',
+            result={
+                'status': 'otp_found',
+                'otp': '123456',
+                'found': True,
+                'current_url': 'https://outlook.live.com/mail/',
+                'title': 'Mail - Gold Appleid - Outlook',
+                'attempts': 1,
+            },
+        )
+
+        webhook_request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(webhook_request.full_url, 'https://webhook.site/callback')
+        self.assertEqual(webhook_request.get_method(), 'POST')
+        self.assertEqual(webhook_request.headers['X-callback-token'], 'secret')
+        payload = json.loads(webhook_request.data.decode('utf-8'))
+        self.assertEqual(payload['request_id'], email_check_request.id)
+        self.assertEqual(payload['email'], 'person@example.com')
+        self.assertEqual(payload['status'], 'otp_found')
+        self.assertEqual(payload['otp'], '123456')
+        self.assertNotIn('result', payload)
+        self.assertNotIn('total_try', payload)
+        self.assertNotIn('finish_at', payload)
+        self.assertEqual(payload['meta'], {'attempts': 1, 'total_try': 0})
+        self.assertNotIn('current_url', payload['meta'])
+        self.assertNotIn('title', payload['meta'])
+        self.assertEqual(list(payload.keys())[-1], 'meta')
+
+    @patch('apps.email_checks.notifications.logger.warning')
+    @patch('apps.email_checks.notifications.request.urlopen')
+    def test_does_not_raise_when_webhook_request_fails(self, mocked_urlopen, mocked_logger_warning):
+        mocked_urlopen.side_effect = OSError('network unavailable')
+        webhook = Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/callback',
+        )
+        email_check_request = EmailCheckRequest.objects.create(
+            email='person@example.com',
+            password='secret-password',
+            status='failed',
+            total_try=0,
+            max_messages=1,
+            finish_at=timezone.now(),
+            webhook=webhook,
+        )
+
+        from apps.email_checks.notifications import UserNotification
+
+        UserNotification(webhook).send_email_check_result(
+            email_check_request,
+            status='failed',
+            error_message='That password is incorrect for your Microsoft account.',
+        )
+        mocked_logger_warning.assert_called_once_with(
+            'Failed to send email check result webhook: request_id=%s webhook_id=%s url=%s error=%s',
+            email_check_request.id,
+            webhook.id,
+            'https://webhook.site/callback',
+            mocked_urlopen.side_effect,
+        )
 
 
 class AutomationWebhookViewTests(TestCase):
