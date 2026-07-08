@@ -19,3 +19,21 @@ class EmailCheckRequest(models.Model):
 
     class Meta:
         db_table = 'email_checks_emailcheckrequest'
+
+class Webhook(models.Model):
+    ip = models.GenericIPAddressField(unique=True)
+    webhook = models.URLField()
+    header_key = models.CharField(max_length=255, blank=True)
+    header_value = models.CharField(max_length=1024, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "webhook"
+        indexes = [
+            models.Index(fields=["ip"]),
+        ]
+
+    def __str__(self):
+        return f"{self.ip} -> {self.webhook}"

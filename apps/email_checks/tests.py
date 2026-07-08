@@ -10,7 +10,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.email_checks.models import EmailCheckRequest
+from apps.email_checks.models import EmailCheckRequest, Webhook
 from apps.email_checks.tasks import run_outlook_check_task
 from apps.scraper.exceptions import LoginFailed
 from config.celery import app as celery_app
@@ -217,6 +217,93 @@ class OutlookEmailCheckRunViewTests(TestCase):
                 'password': 'secret-password',
             },
             format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class AutomationWebhookViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = get_user_model().objects.create_user(
+            username='person',
+            password='test-password',
+        )
+        self.url = reverse('automation-webhook')
+
+    def test_requires_authentication(self):
+        response = self.client.get(
+            self.url,
+            {
+                'webhook': 'https://webhook.site/1f0186e0-b8de-495c-a5be-4569dddae1fd',
+            },
+            REMOTE_ADDR='203.0.113.10',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_creates_webhook_for_request_source_ip(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(
+            self.url,
+            {
+                'webhook': 'https://webhook.site/1f0186e0-b8de-495c-a5be-4569dddae1fd',
+                'header_key': 'X-Callback-Token',
+                'header_value': 'your-secret-token',
+            },
+            REMOTE_ADDR='203.0.113.10',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['status'], 'created')
+        self.assertEqual(response.data['ip'], '203.0.113.10')
+        self.assertEqual(response.data['webhook'], 'https://webhook.site/1f0186e0-b8de-495c-a5be-4569dddae1fd')
+        self.assertEqual(response.data['header_key'], 'X-Callback-Token')
+        self.assertNotIn('header_value', response.data)
+
+        webhook = Webhook.objects.get(ip='203.0.113.10')
+        self.assertEqual(webhook.webhook, 'https://webhook.site/1f0186e0-b8de-495c-a5be-4569dddae1fd')
+        self.assertEqual(webhook.header_key, 'X-Callback-Token')
+        self.assertEqual(webhook.header_value, 'your-secret-token')
+
+    def test_updates_existing_webhook_for_request_source_ip(self):
+        self.client.force_authenticate(user=self.user)
+        Webhook.objects.create(
+            ip='203.0.113.10',
+            webhook='https://webhook.site/old',
+            header_key='Old-Header',
+            header_value='old-secret',
+        )
+
+        response = self.client.get(
+            self.url,
+            {
+                'webhook': 'https://webhook.site/new',
+                'header_key': 'X-Callback-Token',
+                'header_value': 'new-secret',
+            },
+            REMOTE_ADDR='203.0.113.10',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'updated')
+        self.assertEqual(Webhook.objects.count(), 1)
+
+        webhook = Webhook.objects.get(ip='203.0.113.10')
+        self.assertEqual(webhook.webhook, 'https://webhook.site/new')
+        self.assertEqual(webhook.header_key, 'X-Callback-Token')
+        self.assertEqual(webhook.header_value, 'new-secret')
+
+    def test_rejects_invalid_webhook_url(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(
+            self.url,
+            {
+                'webhook': 'not-a-url',
+            },
+            REMOTE_ADDR='203.0.113.10',
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)

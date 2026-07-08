@@ -7,9 +7,13 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.email_checks.models import EmailCheckRequest
-from apps.email_checks.serializers import EmailCheckRunSerializer
+from apps.email_checks.models import EmailCheckRequest, Webhook
+from apps.email_checks.serializers import EmailCheckRunSerializer, WebhookQuerySerializer
 from apps.email_checks.tasks import run_outlook_check_task
+
+
+def get_request_ip(request):
+    return request.META.get('REMOTE_ADDR') or ''
 
 
 class OutlookEmailCheckRunView(APIView):
@@ -101,3 +105,32 @@ class OutlookEmailCheckRequestStatusView(APIView):
 
         response_data['meta'] = meta
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+class AutomationWebhookView(APIView):
+    def get(self, request):
+        serializer = WebhookQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        ip = get_request_ip(request)
+        if not ip:
+            return Response(
+                {'detail': 'Unable to determine request source IP.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        webhook, created = Webhook.objects.update_or_create(
+            ip=ip,
+            defaults=serializer.validated_data,
+        )
+
+        return Response(
+            {
+                'status': 'created' if created else 'updated',
+                'id': webhook.id,
+                'ip': webhook.ip,
+                'webhook': webhook.webhook,
+                'header_key': webhook.header_key,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )

@@ -10,3 +10,9 @@ class EmailCheckRunSerializer(serializers.Serializer):
         default=10,
         required=False,
     )
+
+
+class WebhookQuerySerializer(serializers.Serializer):
+    webhook = serializers.URLField()
+    header_key = serializers.CharField(max_length=255, allow_blank=True, required=False, default='')
+    header_value = serializers.CharField(max_length=1024, allow_blank=True, required=False, default='')
