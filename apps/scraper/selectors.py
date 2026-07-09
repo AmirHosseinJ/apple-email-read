@@ -11,6 +11,11 @@ STAY_SIGNED_IN_TITLE = "h1[data-testid='title']:has-text('Stay signed in?')"
 STAY_SIGNED_IN_NO_BUTTON = "button[data-testid='secondaryButton']:has-text('No')"
 PROTECT_ACCOUNT_TITLE = "#iPageTitle:has-text(\"Let's protect your account\")"
 PROTECT_ACCOUNT_SKIP_BUTTON = "#iShowSkip, a:has-text('Skip for now')"
+OUTLOOK_LAYOUT_DIALOG_TITLE = "[role='dialog']:has-text('Choose your Outlook layout')"
+OUTLOOK_LAYOUT_MAILBOX_RECOMMENDED_BUTTON = (
+    "[role='dialog']:has-text('Choose your Outlook layout') "
+    "button:has-text('Mailbox (Recommended)')"
+)
 OUTLOOK_SEARCH_INPUT = "input[aria-label*='Search'], input[placeholder*='Search'], [contenteditable='true'][aria-label*='Search']"
 OUTLOOK_MESSAGE_ROW = "[role='option'], [role='listitem']"
 SUBMIT_BACK_BUTTON = "#back-button"

@@ -256,6 +256,31 @@ class OutlookClientTests(SimpleTestCase):
         self.assertFalse(result)
         self.assertNotIn(selectors.PROTECT_ACCOUNT_SKIP_BUTTON, page.locators)
 
+    def test_choose_outlook_mailbox_layout_if_shown(self):
+        page = FakePage()
+        client = OutlookClient(page)
+
+        result = client.choose_outlook_mailbox_layout_if_shown()
+
+        title_locator = page.locators[selectors.OUTLOOK_LAYOUT_DIALOG_TITLE]
+        mailbox_button_locator = page.locators[selectors.OUTLOOK_LAYOUT_MAILBOX_RECOMMENDED_BUTTON]
+
+        self.assertTrue(result)
+        self.assertEqual(title_locator.waited_for, {'state': 'visible', 'timeout': 3_000})
+        self.assertEqual(mailbox_button_locator.waited_for, {'state': 'visible', 'timeout': 15_000})
+        self.assertTrue(mailbox_button_locator.clicked)
+        self.assertEqual(page.waited_timeout, 1_000)
+
+    def test_choose_outlook_mailbox_layout_if_shown_returns_false_when_absent(self):
+        page = FakePage()
+        page.locators[selectors.OUTLOOK_LAYOUT_DIALOG_TITLE] = FakeLocator(visible=False)
+        client = OutlookClient(page)
+
+        result = client.choose_outlook_mailbox_layout_if_shown()
+
+        self.assertFalse(result)
+        self.assertNotIn(selectors.OUTLOOK_LAYOUT_MAILBOX_RECOMMENDED_BUTTON, page.locators)
+
     def test_wait_for_successful_login(self):
         page = FakePage()
         client = OutlookClient(page)
@@ -308,6 +333,7 @@ class OutlookClientTests(SimpleTestCase):
 
     def test_find_latest_apple_otp_logs_found_code(self):
         page = FakePage()
+        page.locators[selectors.OUTLOOK_LAYOUT_DIALOG_TITLE] = FakeLocator(visible=False)
         client = OutlookClient(page)
 
         with patch.object(client, 'find_latest_apple_otp_once', return_value='123456'):
@@ -320,6 +346,38 @@ class OutlookClientTests(SimpleTestCase):
 
     def test_find_latest_apple_otp_logs_each_search_attempt(self):
         page = FakePage()
+        client = OutlookClient(page)
+
+        with patch.object(client, 'choose_outlook_mailbox_layout_if_shown') as mocked_choose_layout:
+            with patch.object(client, 'find_latest_apple_otp_once', return_value=None):
+                with self.assertLogs('apps.scraper.outlook_client', level='INFO') as logs:
+                    result = client.find_latest_apple_otp(retry_count=2, retry_wait_seconds=10)
+
+        self.assertEqual(mocked_choose_layout.call_count, 3)
+        self.assertFalse(result['found'])
+        self.assertEqual(
+            logs.output,
+            [
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 1 of 3',
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 2 of 3',
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 3 of 3',
+            ],
+        )
+
+    def test_find_latest_apple_otp_checks_layout_before_first_search(self):
+        page = FakePage()
+        client = OutlookClient(page)
+
+        with patch.object(client, 'choose_outlook_mailbox_layout_if_shown') as mocked_choose_layout:
+            with patch.object(client, 'find_latest_apple_otp_once', return_value='123456'):
+                result = client.find_latest_apple_otp(retry_count=2, retry_wait_seconds=10)
+
+        self.assertEqual(mocked_choose_layout.call_count, 1)
+        self.assertEqual(result['otp'], '123456')
+
+    def test_find_latest_apple_otp_logs_each_search_attempt_without_layout_patch(self):
+        page = FakePage()
+        page.locators[selectors.OUTLOOK_LAYOUT_DIALOG_TITLE] = FakeLocator(visible=False)
         client = OutlookClient(page)
 
         with patch.object(client, 'find_latest_apple_otp_once', return_value=None):

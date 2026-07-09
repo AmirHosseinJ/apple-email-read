@@ -157,6 +157,33 @@ class OutlookClient:
 
         return True
 
+    def is_outlook_layout_dialog_visible(self, *, timeout: int = 3_000) -> bool:
+        title = self.page.locator(selectors.OUTLOOK_LAYOUT_DIALOG_TITLE)
+
+        try:
+            title.wait_for(state="visible", timeout=timeout)
+        except PlaywrightTimeoutError:
+            return False
+
+        return True
+
+    def click_outlook_layout_mailbox_recommended(self) -> None:
+        wait_and_click_first(
+            self.page,
+            selectors.OUTLOOK_LAYOUT_MAILBOX_RECOMMENDED_BUTTON,
+            'Mailbox (Recommended)',
+            timeout=15_000,
+        )
+
+    def choose_outlook_mailbox_layout_if_shown(self) -> bool:
+        if not self.is_outlook_layout_dialog_visible():
+            return False
+
+        logger.info("Choosing Outlook Mailbox (Recommended) layout")
+        self.click_outlook_layout_mailbox_recommended()
+        self.page.wait_for_timeout(1_000)
+        return True
+
     def wait_for_successful_login(self) -> None:
         self.page.wait_for_function(
             """
@@ -220,6 +247,7 @@ class OutlookClient:
             if attempt > 0:
                 self.page.wait_for_timeout(wait_seconds * 1000)
 
+            self.choose_outlook_mailbox_layout_if_shown()
             logger.info("Searching Outlook inbox for Apple OTP on attempt %s of %s", attempt + 1, retries + 1)
             otp = self.find_latest_apple_otp_once()
             if otp:
@@ -269,6 +297,8 @@ def run_email_entry_sequence(
 
                 client.wait_for_successful_login()
                 status = 'login_successful'
+                if client.choose_outlook_mailbox_layout_if_shown():
+                    status = 'outlook_mailbox_layout_selected'
 
                 otp_result = client.find_latest_apple_otp()
                 status = 'otp_found' if otp_result['found'] else 'otp_not_found'
