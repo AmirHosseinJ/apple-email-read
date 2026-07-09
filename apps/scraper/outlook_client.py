@@ -220,6 +220,7 @@ class OutlookClient:
             if attempt > 0:
                 self.page.wait_for_timeout(wait_seconds * 1000)
 
+            logger.info("Searching Outlook inbox for Apple OTP on attempt %s of %s", attempt + 1, retries + 1)
             otp = self.find_latest_apple_otp_once()
             if otp:
                 logger.info("Found Apple OTP: %s on attempt %s", otp, attempt + 1)

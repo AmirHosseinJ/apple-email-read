@@ -413,9 +413,17 @@ class UserNotificationTests(TestCase):
         self.assertNotIn('title', payload['meta'])
         self.assertEqual(list(payload.keys())[-1], 'meta')
 
+    @patch('apps.email_checks.notifications.time.sleep')
+    @patch('apps.email_checks.notifications.logger.info')
     @patch('apps.email_checks.notifications.logger.warning')
     @patch('apps.email_checks.notifications.request.urlopen')
-    def test_does_not_raise_when_webhook_request_fails(self, mocked_urlopen, mocked_logger_warning):
+    def test_does_not_raise_when_webhook_request_fails(
+        self,
+        mocked_urlopen,
+        mocked_logger_warning,
+        mocked_logger_info,
+        mocked_sleep,
+    ):
         mocked_urlopen.side_effect = OSError('network unavailable')
         webhook = Webhook.objects.create(
             ip='203.0.113.10',
@@ -438,11 +446,27 @@ class UserNotificationTests(TestCase):
             status='failed',
             error_message='That password is incorrect for your Microsoft account.',
         )
-        mocked_logger_warning.assert_called_once_with(
-            'Failed to send email check result webhook: request_id=%s webhook_id=%s url=%s error=%s',
+
+        self.assertEqual(mocked_urlopen.call_count, 3)
+        self.assertEqual(mocked_logger_info.call_count, 3)
+        self.assertEqual(mocked_logger_warning.call_count, 3)
+        self.assertEqual(mocked_sleep.call_count, 2)
+        mocked_logger_info.assert_any_call(
+            'Sending email check result webhook: request_id=%s webhook_id=%s url=%s attempt=%s of %s timeout=%s',
             email_check_request.id,
             webhook.id,
             'https://webhook.site/callback',
+            1,
+            3,
+            3,
+        )
+        mocked_logger_warning.assert_any_call(
+            'Failed to send email check result webhook: request_id=%s webhook_id=%s url=%s attempt=%s of %s error=%s',
+            email_check_request.id,
+            webhook.id,
+            'https://webhook.site/callback',
+            3,
+            3,
             mocked_urlopen.side_effect,
         )
 

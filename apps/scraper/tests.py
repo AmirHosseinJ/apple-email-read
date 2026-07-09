@@ -315,7 +315,26 @@ class OutlookClientTests(SimpleTestCase):
                 result = client.find_latest_apple_otp(retry_count=3, retry_wait_seconds=10)
 
         self.assertEqual(result['otp'], '123456')
-        self.assertIn('Found Apple OTP: 123456 on attempt 1', logs.output[0])
+        self.assertIn('Searching Outlook inbox for Apple OTP on attempt 1 of 4', logs.output[0])
+        self.assertIn('Found Apple OTP: 123456 on attempt 1', logs.output[1])
+
+    def test_find_latest_apple_otp_logs_each_search_attempt(self):
+        page = FakePage()
+        client = OutlookClient(page)
+
+        with patch.object(client, 'find_latest_apple_otp_once', return_value=None):
+            with self.assertLogs('apps.scraper.outlook_client', level='INFO') as logs:
+                result = client.find_latest_apple_otp(retry_count=2, retry_wait_seconds=10)
+
+        self.assertFalse(result['found'])
+        self.assertEqual(
+            logs.output,
+            [
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 1 of 3',
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 2 of 3',
+                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 3 of 3',
+            ],
+        )
 
     def test_safe_url_removes_query_and_fragment(self):
         url = safe_url('https://outlook.live.com/mail/#code=secret&state=secret')

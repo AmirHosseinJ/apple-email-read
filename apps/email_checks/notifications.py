@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib import request
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 class UserNotification:
     webhook: Webhook
     timeout: int = settings.EMAIL_CHECK_WEBHOOK_TIMEOUT_SECONDS
+    try_count: int = settings.EMAIL_CHECK_WEBHOOK_TRY_COUNT
+    retry_delay_seconds: int = settings.EMAIL_CHECK_WEBHOOK_RETRY_DELAY_SECONDS
 
     def send_email_check_result(
         self,
@@ -50,14 +53,32 @@ class UserNotification:
             method='POST',
         )
 
-        try:
-            with request.urlopen(webhook_request, timeout=self.timeout) as response:
-                response.read()
-        except (OSError, URLError) as exc:
-            logger.warning(
-                'Failed to send email check result webhook: request_id=%s webhook_id=%s url=%s error=%s',
+        total_attempts = max(1, self.try_count)
+
+        for attempt in range(1, total_attempts + 1):
+            logger.info(
+                'Sending email check result webhook: request_id=%s webhook_id=%s url=%s attempt=%s of %s timeout=%s',
                 payload.get('request_id'),
                 self.webhook.id,
                 self.webhook.webhook,
-                exc,
+                attempt,
+                total_attempts,
+                self.timeout,
             )
+
+            try:
+                with request.urlopen(webhook_request, timeout=self.timeout) as response:
+                    response.read()
+                return
+            except (OSError, URLError) as exc:
+                logger.warning(
+                    'Failed to send email check result webhook: request_id=%s webhook_id=%s url=%s attempt=%s of %s error=%s',
+                    payload.get('request_id'),
+                    self.webhook.id,
+                    self.webhook.webhook,
+                    attempt,
+                    total_attempts,
+                    exc,
+                )
+                if attempt < total_attempts:
+                    time.sleep(self.retry_delay_seconds)
