@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 from apps.scraper import selectors
 from apps.scraper.browser import _browser_launch_options
-from apps.scraper.config import browser_headless, browser_proxy, otp_retry_count, otp_retry_wait_seconds
+from apps.scraper.config import (
+    browser_headless,
+    browser_proxy,
+    otp_attempt_timeout_seconds,
+    otp_retry_count,
+    otp_retry_wait_seconds,
+)
 from apps.scraper.exceptions import LoginFailed, OutlookHighDemand
 from apps.scraper.outlook_client import (
     HIGH_DEMAND_ERROR_MESSAGE,
@@ -312,9 +318,9 @@ class OutlookClientTests(SimpleTestCase):
         message_locator = page.locators[selectors.OUTLOOK_MESSAGE_ROW]
 
         self.assertTrue(result)
-        self.assertEqual(message_locator.waited_for, {'state': 'visible', 'timeout': 10_000})
+        self.assertEqual(message_locator.waited_for, {'state': 'visible', 'timeout': 3_000})
         self.assertTrue(message_locator.clicked)
-        self.assertEqual(page.waited_timeout, 2_000)
+        self.assertEqual(page.waited_timeout, 500)
 
     def test_extract_latest_apple_otp_from_nearby_text(self):
         otp = extract_latest_apple_otp(
@@ -353,14 +359,14 @@ class OutlookClientTests(SimpleTestCase):
                 with self.assertLogs('apps.scraper.outlook_client', level='INFO') as logs:
                     result = client.find_latest_apple_otp(retry_count=2, retry_wait_seconds=10)
 
-        self.assertEqual(mocked_choose_layout.call_count, 3)
+        self.assertEqual(mocked_choose_layout.call_count, 1)
         self.assertFalse(result['found'])
         self.assertEqual(
             logs.output,
             [
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 1 of 3',
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 2 of 3',
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 3 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 1 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 2 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 3 of 3',
             ],
         )
 
@@ -388,9 +394,9 @@ class OutlookClientTests(SimpleTestCase):
         self.assertEqual(
             logs.output,
             [
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 1 of 3',
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 2 of 3',
-                'INFO:apps.scraper.outlook_client:Searching Outlook inbox for Apple OTP on attempt 3 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 1 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 2 of 3',
+                'INFO:apps.scraper.outlook_client:[RETRY] Searching Outlook inbox for Apple OTP on attempt 3 of 3',
             ],
         )
 
@@ -399,10 +405,15 @@ class OutlookClientTests(SimpleTestCase):
 
         self.assertEqual(url, 'https://outlook.live.com/mail/')
 
-    @override_settings(OUTLOOK_OTP_RETRY_COUNT=7, OUTLOOK_OTP_RETRY_WAIT_SECONDS=12)
+    @override_settings(
+        OUTLOOK_OTP_RETRY_COUNT=7,
+        OUTLOOK_OTP_RETRY_WAIT_SECONDS=12,
+        OUTLOOK_OTP_ATTEMPT_TIMEOUT_SECONDS=9,
+    )
     def test_otp_retry_config_reads_django_settings(self):
         self.assertEqual(otp_retry_count(), 7)
         self.assertEqual(otp_retry_wait_seconds(), 12)
+        self.assertEqual(otp_attempt_timeout_seconds(), 9)
 
     @override_settings(EMAIL_CHECKS_HEADLESS=False)
     def test_browser_headless_config_reads_django_settings(self):

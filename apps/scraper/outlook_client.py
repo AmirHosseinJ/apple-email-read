@@ -1,12 +1,13 @@
 import logging
 import re
+from time import monotonic
 from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from apps.scraper import selectors
 from apps.scraper.browser import chromium_page
-from apps.scraper.config import otp_retry_count, otp_retry_wait_seconds
+from apps.scraper.config import otp_attempt_timeout_seconds, otp_retry_count, otp_retry_wait_seconds
 from apps.scraper.exceptions import LoginFailed, OutlookHighDemand, ScraperTimeout
 from apps.scraper.helpers import click_and_switch_tab_if_opened, wait_and_click_first
 
@@ -196,42 +197,58 @@ class OutlookClient:
             timeout=30_000,
         )
 
-    def search_for_apple_messages(self) -> bool:
+    def search_for_apple_messages(self, *, timeout_ms: int = 3_000) -> bool:
         search_input = self.page.locator(selectors.OUTLOOK_SEARCH_INPUT).first
 
         try:
-            search_input.wait_for(state="visible", timeout=10_000)
+            search_input.wait_for(state="visible", timeout=timeout_ms)
         except PlaywrightTimeoutError:
             return False
 
         search_input.fill('Apple')
         search_input.press('Enter')
-        self.page.wait_for_timeout(5_000)
         return True
 
-    def visible_text(self) -> str:
-        return self.page.locator('body').inner_text(timeout=5_000)
+    def visible_text(self, *, timeout_ms: int = 5_000) -> str:
+        return self.page.locator('body').inner_text(timeout=timeout_ms)
 
-    def find_latest_apple_otp_once(self) -> str | None:
-        search_started = self.search_for_apple_messages()
+    def find_latest_apple_otp_once(self, *, attempt_timeout_seconds: int = 10) -> str | None:
+        deadline = monotonic() + max(0, attempt_timeout_seconds)
 
-        otp = extract_latest_apple_otp(self.visible_text())
+        def remaining_ms(*, maximum: int) -> int:
+            return max(0, min(maximum, int((deadline - monotonic()) * 1000)))
+
+        timeout_ms = remaining_ms(maximum=3_000)
+        if timeout_ms == 0:
+            return None
+        search_started = self.search_for_apple_messages(timeout_ms=timeout_ms)
+
+        timeout_ms = remaining_ms(maximum=5_000)
+        if timeout_ms == 0:
+            return None
+        otp = extract_latest_apple_otp(self.visible_text(timeout_ms=timeout_ms))
         if otp or not search_started:
             return otp
 
-        self.open_latest_visible_message()
-        return extract_latest_apple_otp(self.visible_text())
+        timeout_ms = remaining_ms(maximum=3_000)
+        if timeout_ms == 0 or not self.open_latest_visible_message(timeout_ms=timeout_ms):
+            return None
 
-    def open_latest_visible_message(self) -> bool:
+        timeout_ms = remaining_ms(maximum=5_000)
+        if timeout_ms == 0:
+            return None
+        return extract_latest_apple_otp(self.visible_text(timeout_ms=timeout_ms))
+
+    def open_latest_visible_message(self, *, timeout_ms: int = 3_000) -> bool:
         message = self.page.locator(selectors.OUTLOOK_MESSAGE_ROW).first
 
         try:
-            message.wait_for(state="visible", timeout=10_000)
+            message.wait_for(state="visible", timeout=timeout_ms)
         except PlaywrightTimeoutError:
             return False
 
         message.click()
-        self.page.wait_for_timeout(2_000)
+        self.page.wait_for_timeout(500)
         return True
 
     def find_latest_apple_otp(
@@ -239,17 +256,22 @@ class OutlookClient:
         *,
         retry_count: int | None = None,
         retry_wait_seconds: int | None = None,
+        attempt_timeout_seconds: int | None = None,
     ) -> dict:
         retries = otp_retry_count() if retry_count is None else retry_count
         wait_seconds = otp_retry_wait_seconds() if retry_wait_seconds is None else retry_wait_seconds
+        attempt_seconds = (
+            otp_attempt_timeout_seconds() if attempt_timeout_seconds is None else attempt_timeout_seconds
+        )
+
+        self.choose_outlook_mailbox_layout_if_shown()
 
         for attempt in range(retries + 1):
             if attempt > 0:
                 self.page.wait_for_timeout(wait_seconds * 1000)
 
-            self.choose_outlook_mailbox_layout_if_shown()
-            logger.info("Searching Outlook inbox for Apple OTP on attempt %s of %s", attempt + 1, retries + 1)
-            otp = self.find_latest_apple_otp_once()
+            logger.info("[RETRY] Searching Outlook inbox for Apple OTP on attempt %s of %s", attempt + 1, retries + 1)
+            otp = self.find_latest_apple_otp_once(attempt_timeout_seconds=attempt_seconds)
             if otp:
                 logger.info("Found Apple OTP: %s on attempt %s", otp, attempt + 1)
                 return {
