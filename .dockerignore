@@ -1,0 +1,13 @@
+.git
+.agents
+.idea
+.venv
+__pycache__
+*.py[cod]
+.env
+db.sqlite3
+resources
+storage/playwright/*
+storage/screenshots/*
+!storage/playwright/.gitkeep
+!storage/screenshots/.gitkeep
