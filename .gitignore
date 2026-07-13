@@ -10,3 +10,4 @@ storage/screenshots/*
 !storage/screenshots/.gitkeep
 /resources/
 /.agents/
+/server/
