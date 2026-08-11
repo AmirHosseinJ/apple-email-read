@@ -89,9 +89,12 @@ class OutlookClient:
         return True
 
     def click_use_password(self) -> None:
-        use_password_button = self.page.locator(selectors.USE_PASSWORD_BUTTON).first
-        use_password_button.wait_for(state="visible", timeout=15_000)
-        use_password_button.click()
+        wait_and_click_first(
+            self.page,
+            selectors.USE_PASSWORD_BUTTON,
+            'Use your password',
+            timeout=15_000,
+        )
 
     def use_password_if_code_prompt_is_shown(self) -> bool:
         if not self.is_get_code_sign_in_page():
@@ -300,7 +303,6 @@ def run_email_entry_sequence(
             client.start_login_sequence()
             client.fill_email(email)
             client.submit_next()
-
             status = 'email_submitted'
             if client.use_password_if_code_prompt_is_shown():
                 status = 'password_method_selected'

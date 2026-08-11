@@ -4,8 +4,11 @@ EMAIL_INPUT = "input[placeholder='Email, phone, or Skype']"
 SUBMIT_NEXT_BUTTON = "input[type='submit']"
 PASSWORD_INPUT = "#passwordEntry, input[type='password']"
 INCORRECT_PASSWORD_ERROR = "[role='alert']:has-text('That password is incorrect for your Microsoft account.')"
-GET_CODE_SIGN_IN_TITLE = "h1[data-testid='title']:has-text('Get a code to sign in')"
-USE_PASSWORD_BUTTON = "span[role='button']:has-text('Use your password')"
+GET_CODE_SIGN_IN_TITLE = (
+    "h1[data-testid='title']:has-text('Get a code to sign in'), "
+    "h1[data-testid='title']:has-text('Verify your email')"
+)
+USE_PASSWORD_BUTTON = "[data-testid='viewFooter'] span[role='button']:has-text('Use your password')"
 SUBMIT_PASSWORD_BUTTON = '[data-testid="primaryButton"]'
 STAY_SIGNED_IN_TITLE = "h1[data-testid='title']:has-text('Stay signed in?')"
 STAY_SIGNED_IN_NO_BUTTON = "button[data-testid='secondaryButton']:has-text('No')"
